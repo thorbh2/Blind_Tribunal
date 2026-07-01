@@ -5,3 +5,5 @@ output
 .env
 deploy-blind-tribunal.json
 *.tsbuildinfo
+
+.vercel
