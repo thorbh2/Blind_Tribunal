@@ -1,26 +1,33 @@
 # Ritual Blind Tribunal
 
-Standalone second-wallet submission for the Ritual Academy Privacy-Preserving AI Bounty Judge assignment.
+[Live app](https://ritual-blind-tribunal.vercel.app) · [Contract](https://explorer.ritualfoundation.org/address/0x22b3f7F8DACe7fC10A5dC168300De9aBF479e0c2) · [Deploy tx](https://explorer.ritualfoundation.org/tx/0x4a382c9742b1ac0b8a53c7798c84fe9690e60be865dfc57b12a819d67639a8e7)
 
-## Problem
+A commit-reveal bounty judge for Ritual testnet.
 
-In a normal bounty system, the first person to publish a good answer can accidentally become the template for everyone else. Ritual Blind Tribunal turns the process into a blind court: accounts seal answers first, open proof later, and only verified reveals enter one batch verdict.
+The goal is simple: stop public bounty submissions from becoming a copy-and-improve race. Builders submit a sealed hash during the commit window, reveal only after the deadline, and only valid account-bound reveals can be passed into the judging batch.
 
-## Contract
+## Why it exists
 
-`BlindTribunalJudge.sol` implements the required flow:
+In a normal public bounty flow, the first strong answer often becomes free research for everyone else. Blind Tribunal makes the submission phase private without making the final result unauditable.
 
-Wallet 2 deployment status:
+The contract keeps the rules objective:
+
+- one commitment per wallet per bounty
+- no reveal before the commit window closes
+- no late commits
+- reveal must match the original sender and bounty ID
+- the judging batch is recorded as a hash before the winner is finalized
+
+## Deployed contract
 
 ```text
-0x22b3f7F8DACe7fC10A5dC168300De9aBF479e0c2
+Network: Ritual Chain testnet
+Chain ID: 1979
+Contract: 0x22b3f7F8DACe7fC10A5dC168300De9aBF479e0c2
+Deploy tx: 0x4a382c9742b1ac0b8a53c7798c84fe9690e60be865dfc57b12a819d67639a8e7
 ```
 
-Wallet 2 deploy transaction:
-
-```text
-0x4a382c9742b1ac0b8a53c7798c84fe9690e60be865dfc57b12a819d67639a8e7
-```
+## Contract interface
 
 ```solidity
 submitCommitment(uint256 bountyId, bytes32 commitment)
@@ -29,101 +36,65 @@ judgeAll(uint256 bountyId, bytes calldata llmInput)
 finalizeWinner(uint256 bountyId, uint256 winnerIndex)
 ```
 
-The commitment is:
+Commitments are bound to the answer, salt, sender, and bounty:
 
 ```solidity
 keccak256(abi.encode(answer, salt, msg.sender, bountyId))
 ```
 
-Binding the sender and bounty ID prevents a copied reveal from another wallet or another bounty from passing verification.
+That sender binding matters. A copied answer cannot be revealed from a different wallet and still pass verification.
 
-In the product model, one wallet address is one account. A participant account cannot hand its reveal to another address because the sender is part of the commitment.
+## Flow
 
-## Lifecycle
+1. A bounty is opened with a prompt URI, prompt hash, commit deadline, and reveal deadline.
+2. During the commit phase, builders submit only a `bytes32` commitment.
+3. After the commit deadline, builders reveal the answer and salt.
+4. The contract recomputes the hash and accepts only valid reveals.
+5. Once reveal is closed, the judge submits one batch judging payload.
+6. The contract stores `keccak256(llmInput)` and finalizes a winner from the eligible reveal list.
 
-1. A case creator calls `createBounty` with a prompt URI, prompt hash, commit deadline, and reveal deadline.
-2. During the sealed phase, each account calls `submitCommitment` with only a hash.
-3. After the commit deadline, accounts call `revealAnswer` with the answer and salt.
-4. The contract recomputes the seal and accepts only valid reveals.
-5. After the reveal deadline, the judge or creator calls `judgeAll` with one canonical verdict batch.
-6. The contract stores only `keccak256(llmInput)` so the verdict batch can be audited.
-7. The judge or creator calls `finalizeWinner` with an index from the eligible revealed accounts.
+## What is public
 
-## What Is Onchain
+- bounty metadata and deadlines
+- commitment hashes
+- revealed answers after the reveal window opens
+- participant addresses
+- batch judging hash
+- winner index and winner address
 
-- Case creator
-- Prompt URI and prompt hash
-- Commit and reveal deadlines
-- Commitment hashes
-- Revealed answer text, salt, answer hash, and participant address after reveal
-- Batch verdict input hash
-- Winner index, winner submission ID, and winning account address
+## What stays hidden
 
-## What Stays Hidden
+The answer and salt stay with the builder during the commit phase. They become public only when reveal starts, which removes the incentive to copy during the active submission window.
 
-The answer and salt stay offchain with the participant during the commit phase. They become public only during reveal, after copying during the submission window is no longer useful.
+## Ritual-native extension
 
-## Ritual-Native Hidden Submission Extension
+The advanced version would encrypt answers to a TEE-backed tribunal key. Onchain state would store ciphertext hashes, deadlines, and receipts. Plaintext would exist only in the user client before encryption and inside the Ritual execution environment during one batch judging run.
 
-The advanced Ritual-native version would encrypt answers to a TEE-backed tribunal key during the sealed period. Onchain storage would keep ciphertext hashes, prompt hashes, deadlines, and receipts. Plaintext would exist only inside the participant client before encryption and inside the Ritual TEE during the single batch verdict run. The LLM receives one batch containing all eligible decrypted submissions, not one request per answer.
-
-## Test Plan
-
-The test script covers:
-
-- contract compilation
-- local EVM deployment
-- case creation
-- empty commitment rejection
-- duplicate commitment rejection
-- early reveal rejection
-- late commitment rejection
-- missing commitment rejection
-- wrong salt rejection
-- valid reveal acceptance after commit closes
-- batch verdict only after reveal closes
-- judge authorization
-- winner finalization from eligible revealed answers
-- invalid winner and double-finalize rejection
-
-Run:
+## Local setup
 
 ```bash
 npm install
 npm test
-```
-
-## Frontend
-
-The frontend is live-only. It reads:
-
-- `nextBountyId`
-- `bounties`
-- revealed counts
-- contract storage for every visible case
-
-No preset case rows are rendered. If the contract has no cases yet, the docket stays empty until `createBounty` writes to chain.
-
-Run locally:
-
-```bash
 npm run dev
 ```
 
-## Deploy
-
-Copy `.env.example` to `.env`, fill a burner private key, then run:
+To deploy your own copy:
 
 ```bash
+cp .env.example .env
 npm run deploy
 ```
 
-After deployment, set:
+Then set the frontend contract address:
 
 ```env
 VITE_BLIND_TRIBUNAL_ADDRESS=0x22b3f7F8DACe7fC10A5dC168300De9aBF479e0c2
 ```
 
-## Reflection
+## Tests
 
-Public data should include the bounty prompt hash, deadlines, commitment hashes, reveal receipts, the final winner, and enough batch-judging evidence for anyone to audit the process. Hidden data should include the answer and salt until the reveal phase opens, because the whole point is to stop copying while submissions are still active. AI should help score eligible answers in one consistent batch, especially for structured rubrics like clarity, originality, and security. Humans should decide the bounty prompt, the rubric, whether the AI result is acceptable, and any dispute resolution. The contract should enforce timing, identity binding, and eligibility rules because those are objective. The AI should never be trusted to decide who is eligible; it should only judge answers that the contract already verified.
+The test suite covers deployment, bounty creation, early/late phase checks, duplicate commits, missing commits, wrong salts, valid reveals, batch judging authorization, winner finalization, invalid winners, and double-finalize protection.
+
+## Frontend
+
+The app is wired to the live contract. It reads current bounty state from Ritual testnet and keeps the UI empty until real cases exist onchain.
